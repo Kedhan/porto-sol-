@@ -1,6 +1,7 @@
 // Red Mesa Heat — traffic.js
 // Pedestrians on the sidewalks and the traffic manager that keeps
-// the streets alive. Pedestrians flee from a speeding car.
+// the streets alive. Pedestrians flee from a speeding car, and a
+// car that runs one down draws the attention of the Red Mesa PD.
 (function () {
   'use strict';
   var THREE = window.THREE;
@@ -55,7 +56,7 @@
         p.speed = 5.5;
       } else {
         p.speed = 1.6;
-        if (Math.random() < 0.002) p.heading += (Math.random() - 0.5) * 2;
+        if (RM.rng() < 0.002) p.heading += (RM.rng() - 0.5) * 2;
       }
       // Run over? A car hit at speed knocks them down and raises heat.
       if (d < 2.2 && Math.abs(playerSpeed) > 4 && RM.state.mode === 'car') {

@@ -18,7 +18,7 @@
     var l1 = new THREE.Mesh(new THREE.BoxGeometry(0.26, 0.72, 0.26), legMat);
     l1.position.set(-0.17, 0.36, 0); g.add(l1);
     var l2 = l1.clone(); l2.position.x = 0.17; g.add(l2);
-    // pistol in the right hand
+    // pistol in the right hand (main.js fires it on click)
     var gun = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.12, 0.42), new THREE.MeshLambertMaterial({ color: 0x111111 }));
     gun.position.set(0.38, 1.05, 0.3); g.add(gun);
     g.userData.leg1 = l1; g.userData.leg2 = l2;
@@ -93,7 +93,7 @@
     cam.lookAt(px, lookY, pz);
   }
 
-  // Enter the nearest car within 5m; exit the current car beside the road.
+  // Enter the nearest car within 5.5m; exit the current car beside the road.
   function tryEnterExit() {
     var p = RM.player, st = RM.state;
     if (st.mode === 'foot') {

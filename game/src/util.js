@@ -29,12 +29,13 @@
     return a + d * t;
   }
   function fmtCash(n) { return '$' + Math.floor(n).toLocaleString('en-US'); }
+  function clamp01(v) { return v < 0 ? 0 : (v > 1 ? 1 : v); }
 
   window.RM = {
     seed: seed,
     shot: params.get('shot') || '',
     rng: rng, rand: rand, randInt: randInt, pick: pick,
-    clamp: clamp, lerp: lerp, dist2: dist2, angleLerp: angleLerp, fmtCash: fmtCash,
+    clamp: clamp, clamp01: clamp01, lerp: lerp, dist2: dist2, angleLerp: angleLerp, fmtCash: fmtCash,
     mulberry32: mulberry32,
     // World constants
     MAP: 460,            // half-size of the playable city

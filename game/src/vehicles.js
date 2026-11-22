@@ -5,7 +5,7 @@
   'use strict';
   var THREE = window.THREE;
 
-  var COLORS = [0xe74c3c, 0x3498db, 0xf1c40f, 0x9b59b6, 0x1abc9c, 0xe67e22, 0xecf0f1, 0x2ecc71, 0xff6b9d, 0xd97a2a];
+  var COLORS = [0xe74c3c, 0x3498db, 0xf1c40f, 0x9b59b6, 0x1abc9c, 0xe67e22, 0xecf0f1, 0x2ecc71, 0xff6b9d, 0xd97a2a, 0x2a9d8f];
   var MODELS = [
     { name: 'Sunset Coupe', max: 34, accel: 22 },
     { name: 'Mesa Sedan', max: 30, accel: 19 },

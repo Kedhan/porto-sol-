@@ -147,6 +147,7 @@
       if (s.timer <= 0) { this.fail('Out of time.'); return; }
     }
     var t = this.targetNow();
+    if (!t) return; // no active target (e.g. between jobs)
     var d = Math.sqrt(RM.dist2(p.x, p.z, t.x, t.z));
     var m = s.mission;
     if (this.beacon) {

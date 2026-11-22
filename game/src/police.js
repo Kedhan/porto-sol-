@@ -29,7 +29,7 @@
   };
   PoliceManager.prototype.spawnOne = function (nearX, nearZ) {
     var p = RM.player;
-    var a = Math.random() * Math.PI * 2;
+    var a = RM.rng() * Math.PI * 2;
     var x = (nearX !== undefined ? nearX : p.x) + Math.sin(a) * 70;
     var z = (nearZ !== undefined ? nearZ : p.z) + Math.cos(a) * 70;
     x = RM.clamp(x, -440, 440); z = RM.clamp(z, -440, 440);

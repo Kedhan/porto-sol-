@@ -49,7 +49,7 @@
 
     // Sky + light: golden-hour desert sunset.
     scene.background = new THREE.Color(0xffb36b);
-    scene.fog = new THREE.Fog(0xffc98a, 140, 780);
+    scene.fog = new THREE.Fog(0xffc98a, 140, 800);
     var hemi = new THREE.HemisphereLight(0xffd9a0, 0x8a5a3a, 0.95);
     scene.add(hemi);
     var sun = new THREE.DirectionalLight(0xffc070, 1.15);

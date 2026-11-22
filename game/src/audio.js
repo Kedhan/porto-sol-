@@ -93,7 +93,7 @@
       var f = bass[i % bass.length]; i++;
       if (f) s.blip(f, 0.32, 'triangle', 0.08);
       if (i % 4 === 0) s.blip(220, 0.1, 'sine', 0.025);
-    }, 240);
+    }, 235);
   };
   RM.AudioEngine = AudioEngine;
 })();
