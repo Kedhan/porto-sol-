@@ -1,391 +1,365 @@
-// Cinder Bay — boot, game loop, input, combat, pedestrians and mission flow.
-import { clamp, mulberry32, pick, angleTo, dist2 } from './util.js';
-import { buildCity, drawCity, resolveBuildingCollision, WORLD_W, WORLD_H } from './city.js';
-import { AudioEngine } from './audio.js';
-import { createPlayer, updatePlayerOnFoot, drawPlayer, drawEnemy } from './player.js';
-import { makeCar, spawnParkedCars, spawnTraffic, updatePlayerCar, updateTrafficCar, drawCar } from './vehicles.js';
-import { PoliceManager, bustedCheck } from './police.js';
-import { MISSIONS, missionByIndex, missionListText, createMissionState, missionProgressText } from './missions.js';
-import { updateHud, drawMinimap, showToast } from './hud.js';
+// Red Mesa Heat — main.js
+// Boot, game loop, input, shooting, enemies, busted/wasted and save/load.
+// Classic scripts only: THREE is the vendored global from vendor/three.min.js.
+(function () {
+  'use strict';
+  var THREE = window.THREE;
+  var SAVE_KEY = 'red-mesa-heat-save-v1';
 
-const canvas = document.getElementById('game');
-const ctx = canvas.getContext('2d');
-const audio = new AudioEngine();
-window.__cinderAudio = audio;
+  var input = { up: false, down: false, left: false, right: false, boost: false, mouseDown: false };
+  var tracers = [];
+  var lastTime = 0;
 
-const SAVE_KEY = 'cinder-bay-save-v1';
-const city = buildCity();
-const state = {
-  mode: 'menu', // menu | playing | paused | over
-  player: createPlayer(635, 700),
-  city, police: new PoliceManager(),
-  parked: spawnParkedCars(city, 16),
-  traffic: spawnTraffic(city, 14),
-  pedestrians: [], enemies: [], bullets: [], enemyBullets: [], particles: [],
-  missionIndex: 0, missionState: null, missionHint: '',
-  timeMin: 624, day: 1, cash: 0,
-  cam: { x: 0, y: 0, w: 1280, h: 720 },
-  input: { up: false, down: false, left: false, right: false, boost: false, mouseX: 0, mouseY: 0, mouseDown: false },
-  overKind: null, overTimer: 0,
-};
-const input = state.input;
-window.__cinderState = state; // exposed for play-testing / screenshots
+  function el(id) { return document.getElementById(id); }
 
-function resize() {
-  canvas.width = window.innerWidth; canvas.height = window.innerHeight;
-  state.cam.w = canvas.width; state.cam.h = canvas.height;
-}
-window.addEventListener('resize', resize); resize();
+  function init() {
+    try {
+      if (!THREE) throw new Error('three.js failed to load');
+      var renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
+      renderer.setSize(window.innerWidth, window.innerHeight);
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5));
+      renderer.outputEncoding = THREE.sRGBEncoding;
+      el('game').appendChild(renderer.domElement);
+      RM.renderer = renderer;
+      RM.scene = new THREE.Scene();
+      RM.camera = new THREE.PerspectiveCamera(62, window.innerWidth / window.innerHeight, 0.1, 2200);
+      RM.camera.position.set(0, 8, -18);
 
-function spawnPedestrians() {
-  const rnd = mulberry32(99);
-  state.pedestrians = [];
-  for (let i = 0; i < 26; i++) {
-    const road = city.roadsV[Math.floor(rnd() * city.roadsV.length)];
-    state.pedestrians.push({
-      x: road + (rnd() > 0.5 ? 58 : -58), y: 300 + rnd() * 1900,
-      angle: rnd() * Math.PI * 2, speed: 35 + rnd() * 30,
-      color: pick(['#e74c3c', '#3498db', '#f1c40f', '#9b59b6', '#1abc9c', '#ecf0f1'], rnd),
-      flee: 0,
+      RM.audio = new RM.AudioEngine();
+      RM.buildCity(RM.scene);
+      RM.createPlayer(0, 200);
+      RM.parked = RM.spawnParked(14);
+      RM.cars = RM.spawnTraffic(12);
+      RM.peds = RM.spawnPeds(22);
+      RM.policeMgr = new RM.PoliceManager();
+      RM.missionMgr = new RM.MissionManager();
+
+      window.addEventListener('resize', onResize);
+      bindInput();
+      bindMenus();
+      loadSaveIntoMenu();
+      el('menuMissions').innerHTML = RM.missionListText(0);
+
+      // Shot modes for deterministic screenshots / play-tests.
+      var shot = RM.shot;
+      if (shot && shot !== 'menu') {
+        startGame(false);
+        applyShot(shot);
+      } else if (shot === 'menu') {
+        // stay on the title screen
+      }
+      lastTime = performance.now();
+      requestAnimationFrame(loop);
+      window.__RM_READY = true;
+    } catch (e) {
+      window.__RM_ERROR = String(e && e.message || e);
+      var m = el('menu');
+      if (m) m.innerHTML = '<div class="panel"><h1>RED MESA HEAT</h1><p>Failed to start: ' + window.__RM_ERROR + '</p></div>';
+    }
+  }
+
+  function onResize() {
+    RM.camera.aspect = window.innerWidth / window.innerHeight;
+    RM.camera.updateProjectionMatrix();
+    RM.renderer.setSize(window.innerWidth, window.innerHeight);
+  }
+
+  function bindInput() {
+    var keyMap = { KeyW: 'up', ArrowUp: 'up', KeyS: 'down', ArrowDown: 'down', KeyA: 'left', ArrowLeft: 'left', KeyD: 'right', ArrowRight: 'right', ShiftLeft: 'boost', ShiftRight: 'boost' };
+    window.addEventListener('keydown', function (e) {
+      if (keyMap[e.code] !== undefined) { input[keyMap[e.code]] = true; e.preventDefault(); }
+      if (e.code === 'KeyE' && RM.state.started && !RM.state.over) RM.tryEnterExit();
+      if (e.code === 'KeyM') { RM.state.muted = !RM.state.muted; if (RM.audio) RM.audio.setMuted(RM.state.muted); }
+      if (e.code === 'KeyR') { RM.state.radio = !RM.state.radio; if (RM.hud) RM.hud.toast(RM.state.radio ? 'Radio: Desert FM on' : 'Radio off', 1500); }
+      if (e.code === 'KeyP' || e.code === 'Escape') togglePause();
+      if (e.code === 'Enter' && RM.state.over) respawn();
+    });
+    window.addEventListener('keyup', function (e) {
+      if (keyMap[e.code] !== undefined) input[keyMap[e.code]] = false;
+    });
+    var canvas = el('game');
+    var dragging = false, lastX = 0, lastY = 0;
+    canvas.addEventListener('mousedown', function (e) {
+      dragging = true; lastX = e.clientX; lastY = e.clientY; input.mouseDown = true;
+      if (RM.state.started && RM.state.mode === 'foot') shoot();
+    });
+    window.addEventListener('mouseup', function () { dragging = false; input.mouseDown = false; });
+    window.addEventListener('mousemove', function (e) {
+      if (!dragging) return;
+      RM.camYaw -= (e.clientX - lastX) * 0.005;
+      RM.camPitch = RM.clamp(RM.camPitch + (e.clientY - lastY) * 0.003, -0.15, 0.9);
+      lastX = e.clientX; lastY = e.clientY;
+    });
+    // touch: drag to orbit, tap right side to shoot / interact
+    canvas.addEventListener('touchstart', function (e) { if (RM.audio) RM.audio.ensure(); }, { passive: true });
+  }
+
+  function bindMenus() {
+    el('btnNew').addEventListener('click', function () { if (RM.audio) RM.audio.ensure(); startGame(false); });
+    el('btnContinue').addEventListener('click', function () { if (RM.audio) RM.audio.ensure(); startGame(true); });
+    el('btnHow').addEventListener('click', function () {
+      el('menuMissions').innerHTML = '<b>HOW TO PLAY</b><br>WASD walk &amp; drive · Mouse drag orbits the camera · Click shoots on foot · E steal / enter / exit car · Shift sprint &amp; boost · R radio · M mute · P pause · Steal cars and finish Ilsa\'s five jobs, but watch the stars — the RMPD rams.';
+    });
+    el('btnResume').addEventListener('click', togglePause);
+    el('btnSave').addEventListener('click', function () { saveGame(); if (RM.hud) RM.hud.toast('Game saved.', 1800); });
+    el('btnQuit').addEventListener('click', function () {
+      RM.state.started = false; RM.state.paused = false;
+      el('pauseMenu').classList.add('hidden');
+      el('menu').classList.remove('hidden');
+      el('menuMissions').innerHTML = RM.missionListText(RM.missionMgr ? RM.missionMgr.index : 0);
     });
   }
-}
-function spawnEnemies(n, cx, cy) {
-  const rnd = mulberry32(Date.now() % 100000);
-  for (let i = 0; i < n; i++) {
-    state.enemies.push({
-      x: cx + (rnd() - 0.5) * 320, y: cy + (rnd() - 0.5) * 320,
-      angle: 0, health: 60, shootTimer: 1 + rnd() * 2, speed: 120,
-    });
-  }
-}
-function startMission(i) {
-  const m = missionByIndex(i);
-  if (!m) { state.missionState = null; state.missionHint = ''; showToast('ALL JOBS DONE — Cinder Bay is yours, Dante!'); return; }
-  state.missionState = createMissionState(m);
-  state.missionHint = missionProgressText(state.missionState);
-  if (m.kind === 'defeat') spawnEnemies(m.count, m.target.x, m.target.y);
-  if (m.kind === 'finale') spawnEnemies(0, m.target.x, m.target.y);
-  showToast(`JOB ${m.id}: ${m.title} — ${m.brief}`);
-  document.getElementById('menuMissions').innerHTML = missionListText(i);
-}
-function completeMission() {
-  const ms = state.missionState; if (!ms) return;
-  state.player.cash += ms.mission.reward;
-  audio.cash();
-  showToast(`JOB COMPLETE: ${ms.mission.title} — +$${ms.mission.reward.toLocaleString()}`, 3400);
-  state.missionIndex++;
-  state.missionState = null; state.enemies = [];
-  saveGame();
-  setTimeout(() => startMission(state.missionIndex), 1200);
-}
-function saveGame() {
-  try { localStorage.setItem(SAVE_KEY, JSON.stringify({ cash: state.player.cash, missionIndex: state.missionIndex, day: state.day })); } catch { /* storage unavailable */ }
-}
-function loadSave() {
-  try { const s = JSON.parse(localStorage.getItem(SAVE_KEY) || 'null'); return s && typeof s.cash === 'number' ? s : null; } catch { return null; }
-}
-function newGame(fromSave) {
-  const s = fromSave ? loadSave() : null;
-  state.player = createPlayer(635, 700);
-  state.player.cash = s ? s.cash : 0;
-  state.missionIndex = s ? s.missionIndex : 0;
-  state.day = s ? (s.day || 1) : 1;
-  state.police.clear(); state.enemies = []; state.bullets = []; state.enemyBullets = []; state.particles = [];
-  state.parked = spawnParkedCars(city, 16); state.traffic = spawnTraffic(city, 14);
-  spawnPedestrians();
-  state.timeMin = 624; state.mode = 'playing';
-  document.getElementById('menu').classList.add('hidden');
-  document.getElementById('pauseMenu').classList.add('hidden');
-  document.getElementById('wasted').style.display = 'none';
-  audio.ensure();
-  startMission(state.missionIndex);
-}
-function respawn() {
-  state.player.health = 100; state.player.x = 3055; state.player.y = 680; state.player.car = null;
-  state.player.cash = Math.max(0, state.player.cash - 200);
-  state.police.clear(); state.enemies = [];
-  document.getElementById('wasted').style.display = 'none';
-  state.mode = 'playing'; state.overKind = null;
-  showToast('Clinic patched you up. -$200 bail. Mara is waiting.');
-}
 
-// --- Input ---
-const KEYMAP = { KeyW: 'up', ArrowUp: 'up', KeyS: 'down', ArrowDown: 'down', KeyA: 'left', ArrowLeft: 'left', KeyD: 'right', ArrowRight: 'right', ShiftLeft: 'boost', ShiftRight: 'boost' };
-window.addEventListener('keydown', (e) => {
-  audio.ensure();
-  if (e.code in KEYMAP) { input[KEYMAP[e.code]] = true; e.preventDefault(); }
-  if (e.code === 'KeyM') audio.setMuted(!audio.muted);
-  if (e.code === 'KeyR' && state.mode === 'playing' && !state.player.car) { state.player.ammo = 0; state.player.reloadTimer = 0.6; audio.blip(300, 0.1, 'square', 0.08); }
-  if (e.code === 'KeyE' && state.mode === 'playing') tryEnterExitCar();
-  if ((e.code === 'KeyP' || e.code === 'Escape') && (state.mode === 'playing' || state.mode === 'paused')) togglePause();
-  if (e.code === 'Enter' && state.mode === 'over') respawn();
-});
-window.addEventListener('keyup', (e) => { if (e.code in KEYMAP) input[KEYMAP[e.code]] = false; });
-canvas.addEventListener('mousemove', (e) => { input.mouseX = e.clientX + state.cam.x; input.mouseY = e.clientY + state.cam.y; });
-canvas.addEventListener('mousedown', (e) => { audio.ensure(); if (e.button === 0) input.mouseDown = true; });
-window.addEventListener('mouseup', () => { input.mouseDown = false; });
-canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+  function startGame(continueSave) {
+    var st = RM.state;
+    st.started = true; st.paused = false; st.over = false; st.overKind = null;
+    st.health = 100; st.carHealth = 100;
+    el('menu').classList.add('hidden');
+    el('pauseMenu').classList.add('hidden');
+    el('wasted').style.display = 'none';
+    if (continueSave) {
+      try {
+        var save = JSON.parse(localStorage.getItem(SAVE_KEY) || 'null');
+        if (save) {
+          st.cash = save.cash || 250;
+          st.missionsDone = save.missionsDone || 0;
+          RM.missionMgr.start(save.missionIndex || 0);
+          if (RM.hud) RM.hud.toast('Welcome back, Rook. Job ' + (save.missionIndex + 1) + ' is waiting.', 3200);
+          return;
+        }
+      } catch (e) {}
+    }
+    st.cash = 250; st.missionsDone = 0;
+    RM.policeMgr.clear();
+    RM.missionMgr.start(0);
+    if (RM.hud) RM.hud.toast('RED MESA — Rook Calloway is back. Job 1: Homecoming.', 3600);
+  }
 
-function togglePause() {
-  if (state.mode === 'playing') {
-    state.mode = 'paused';
-    document.getElementById('pauseStats').textContent = `Cash $${state.player.cash.toLocaleString()} · Missions ${state.missionIndex}/5 complete · Wanted ${state.police.wantedStars()}`;
-    document.getElementById('pauseMenu').classList.remove('hidden');
-  } else if (state.mode === 'paused') {
-    state.mode = 'playing'; document.getElementById('pauseMenu').classList.add('hidden');
+  function saveGame() {
+    try {
+      localStorage.setItem(SAVE_KEY, JSON.stringify({
+        cash: RM.state.cash,
+        missionIndex: RM.missionMgr ? RM.missionMgr.index : 0,
+        missionsDone: RM.state.missionsDone
+      }));
+    } catch (e) {}
   }
-}
-function tryEnterExitCar() {
-  const p = state.player;
-  if (p.car) { // exit
-    const car = p.car; p.car = null;
-    p.x = car.x + Math.cos(car.angle + Math.PI / 2) * 40; p.y = car.y + Math.sin(car.angle + Math.PI / 2) * 40;
-    resolveBuildingCollision(city, p, 16);
-    return;
-  }
-  const all = [...state.parked, ...state.traffic, ...state.police.cars];
-  let best = null, bestD = 70;
-  for (const c of all) { const d = Math.hypot(c.x - p.x, c.y - p.y); if (d < bestD) { best = c; bestD = d; } }
-  if (!best) { showToast('No car close enough — walk to a parked car.'); return; }
-  if (best.police) { state.police.addHeat(12, 'stole a police car'); showToast('You stole a PD cruiser! Wanted up!'); }
-  else if (best.parked) { state.police.addHeat(6, 'car theft'); showToast(`Stole a ${best.model.name} — the owner will notice.`); audio.horn(); }
-  else { state.police.addHeat(10, 'carjacking'); showToast(`Carjacked a ${best.model.name}!`); }
-  best.parked = false; best.traffic = false;
-  state.parked = state.parked.filter((c) => c !== best);
-  state.traffic = state.traffic.filter((c) => c !== best);
-  p.car = best; p.x = best.x; p.y = best.y;
-}
-function shoot() {
-  const p = state.player;
-  if (p.car || p.shootCooldown > 0 || p.reloadTimer > 0) return;
-  if (p.ammo <= 0) { p.reloadTimer = 0.6; return; }
-  p.ammo--; p.shootCooldown = 0.22; audio.shoot();
-  const a = Math.atan2(input.mouseY - p.y, input.mouseX - p.x);
-  state.bullets.push({ x: p.x + Math.cos(a) * 22, y: p.y + Math.sin(a) * 22, vx: Math.cos(a) * 900, vy: Math.sin(a) * 900, life: 0.7 });
-  // Fleeing pedestrians + heat for shooting in public
-  for (const ped of state.pedestrians) if (dist2(ped.x, ped.y, p.x, p.y) < 300 * 300) ped.flee = 3;
-}
-function burst(x, y, color, n) {
-  for (let i = 0; i < n; i++) state.particles.push({ x, y, vx: (Math.random() - 0.5) * 260, vy: (Math.random() - 0.5) * 260, life: 0.5 + Math.random() * 0.4, color });
-}
+  RM.saveGame = saveGame;
 
-// --- Update ---
-function update(dt) {
-  const p = state.player;
-  state.timeMin += dt * 0.6;
-  if (state.timeMin >= 1440) { state.timeMin -= 1440; state.day++; }
-  // Player
-  if (p.car) {
-    updatePlayerCar(p.car, input, dt, city);
-    p.x = p.car.x; p.y = p.car.y; p.angle = p.car.angle; p.speed = Math.abs(p.car.speed);
-    audio.setEngine(Math.abs(p.car.speed) / p.car.model.max);
-    if (Math.abs(p.car.speed) > 300) state.police.addHeat(0.02, '');
-  } else {
-    updatePlayerOnFoot(p, input, dt, city);
-    audio.setEngine(0);
-    if (input.mouseDown) shoot();
+  function loadSaveIntoMenu() {
+    try {
+      var save = JSON.parse(localStorage.getItem(SAVE_KEY) || 'null');
+      el('btnContinue').style.display = save ? '' : 'none';
+      if (save) el('menuMissions').innerHTML = RM.missionListText(save.missionIndex || 0);
+    } catch (e) { el('btnContinue').style.display = 'none'; }
   }
-  // Traffic + parked
-  const allCars = [...state.traffic, ...state.parked, ...state.police.cars];
-  for (const c of state.traffic) updateTrafficCar(c, dt, city, allCars);
-  state.police.update(dt, p, city, audio);
-  // Pedestrians
-  for (const ped of state.pedestrians) {
-    if (ped.flee > 0) { ped.flee -= dt; const a = Math.atan2(ped.y - p.y, ped.x - p.x); ped.x += Math.cos(a) * 170 * dt; ped.y += Math.sin(a) * 170 * dt; }
-    else { ped.x += Math.cos(ped.angle) * ped.speed * dt; ped.y += Math.sin(ped.angle) * ped.speed * dt; if (Math.random() < 0.005) ped.angle += (Math.random() - 0.5) * 2; }
-    resolveBuildingCollision(city, ped, 10);
-    if (p.car && Math.hypot(ped.x - p.x, ped.y - p.y) < 30 && Math.abs(p.car.speed) > 60) {
-      ped.flee = 3; state.police.addHeat(14, 'hit a pedestrian'); burst(ped.x, ped.y, '#ff6666', 8); audio.crash();
+
+  function togglePause() {
+    if (!RM.state.started || RM.state.over) return;
+    RM.state.paused = !RM.state.paused;
+    el('pauseMenu').classList.toggle('hidden', !RM.state.paused);
+    if (RM.state.paused) {
+      el('pauseStats').textContent = 'Cash ' + RM.fmtCash(RM.state.cash) + ' · Missions ' + RM.state.missionsDone + '/5 complete · Wanted ' + RM.state.wanted + '★';
     }
   }
-  // Enemies
-  for (const e of state.enemies) {
-    const d = Math.hypot(p.x - e.x, p.y - e.y);
-    e.angle = Math.atan2(p.y - e.y, p.x - e.x);
-    if (d > 260) { e.x += Math.cos(e.angle) * e.speed * dt; e.y += Math.sin(e.angle) * e.speed * dt; }
-    e.shootTimer -= dt;
-    if (e.shootTimer <= 0 && d < 520) {
-      e.shootTimer = 1.4 + Math.random();
-      state.enemyBullets.push({ x: e.x, y: e.y, vx: Math.cos(e.angle) * 620, vy: Math.sin(e.angle) * 620, life: 1 });
-      audio.enemyShoot();
+
+  function respawn() {
+    var st = RM.state;
+    st.over = false; st.overKind = null;
+    st.health = 100; st.carHealth = 100;
+    st.cash = Math.max(0, st.cash - 200);
+    RM.policeMgr.clear();
+    var p = RM.player;
+    p.x = 0; p.z = 200; p.heading = 0;
+    p.mesh.position.set(p.x, 0, p.z);
+    if (RM.car) { RM.car = null; p.car = null; st.mode = 'foot'; p.mesh.visible = true; }
+    el('wasted').style.display = 'none';
+    if (RM.hud) RM.hud.toast('Back on the street — $200 bail paid.', 3000);
+  }
+
+  function applyShot(shot) {
+    var p = RM.player;
+    if (shot === 'drive') {
+      putPlayerInCar(0, 270, Math.PI, 14);
+    } else if (shot === 'onfoot') {
+      // On road x=0 looking north down the street, park ahead on the right.
+      p.x = 0; p.z = 150; p.heading = Math.PI;
+      p.mesh.position.set(p.x, 0, p.z);
+      RM.camYaw = p.heading;
+    } else if (shot === 'chase') {
+      putPlayerInCar(0, 90, Math.PI, 12);
+      RM.policeMgr.setWanted(3);
+      // Police ahead in the player's view: a roadblock converging on Rook.
+      var pc1 = RM.policeMgr.spawnOne(0, 90);
+      pc1.x = -5; pc1.z = 45; pc1.heading = 0; pc1.mesh.position.set(-5, 0, 45); pc1.mesh.rotation.y = 0;
+      var pc2 = RM.policeMgr.spawnOne(0, 90);
+      pc2.x = 6; pc2.z = 20; pc2.heading = 0; pc2.mesh.position.set(6, 0, 20); pc2.mesh.rotation.y = 0;
+      RM.missionMgr.start(2);
+    } else if (shot === 'mission') {
+      // On road x=90 looking north: the bank and its beacon straight ahead,
+      // a police car closing in from the left lane.
+      putPlayerInCar(90, 230, Math.PI, 8);
+      RM.missionMgr.start(3);
+      RM.policeMgr.setWanted(2);
+      var pc = RM.policeMgr.spawnOne(90, 200);
+      pc.x = 84; pc.z = 150; pc.heading = Math.PI; pc.mesh.position.set(84, 0, 150); pc.mesh.rotation.y = pc.heading;
     }
-    resolveBuildingCollision(city, e, 14);
   }
-  // Bullets
-  for (const b of state.bullets) {
-    b.x += b.vx * dt; b.y += b.vy * dt; b.life -= dt;
-    for (const e of state.enemies) {
-      if (Math.hypot(e.x - b.x, e.y - b.y) < 18) { e.health -= 34; b.life = 0; burst(b.x, b.y, '#ffcc44', 6); if (e.health <= 0) { burst(e.x, e.y, '#ff4444', 14); state.police.addHeat(4, 'shootout'); } }
+
+  function putPlayerInCar(x, z, heading, speed) {
+    var car = RM.parked[0] || RM.cars[0];
+    if (!car) return;
+    RM.parked = RM.parked.filter(function (c) { return c !== car; });
+    car.parked = false;
+    car.x = x; car.z = z; car.heading = heading; car.speed = speed || 0;
+    car.mesh.position.set(x, 0, z);
+    car.mesh.rotation.y = heading;
+    RM.player.car = car; RM.car = car;
+    RM.state.mode = 'car';
+    RM.player.mesh.visible = false;
+    RM.player.x = x; RM.player.z = z;
+    RM.camYaw = heading;
+  }
+
+  // Hitscan pistol: nearest enemy / police car in front of the camera.
+  function shoot() {
+    var p = RM.player;
+    if (!p || RM.state.mode !== 'foot' || p.shootCooldown > 0) return;
+    p.shootCooldown = 0.28;
+    if (RM.audio) RM.audio.shoot();
+    var fx = Math.sin(RM.camYaw), fz = Math.cos(RM.camYaw);
+    var best = null, bestScore = 1e9;
+    function consider(x, z, obj) {
+      var dx = x - p.x, dz = z - p.z, d = Math.sqrt(dx * dx + dz * dz);
+      if (d > 42 || d < 1) return;
+      var dot = (dx * fx + dz * fz) / d;
+      if (dot < 0.86) return;
+      var score = d + (1 - dot) * 20;
+      if (score < bestScore) { bestScore = score; best = obj; }
     }
-    for (const ped of state.pedestrians) if (Math.hypot(ped.x - b.x, ped.y - b.y) < 14) { ped.flee = 4; b.life = 0; }
+    RM.enemies.forEach(function (e) { if (!e.dead) consider(e.x, e.z, { kind: 'enemy', ref: e }); });
+    RM.police.forEach(function (c) { consider(c.x, c.z, { kind: 'police', ref: c }); });
+    // tracer line from the player toward the aim direction
+    var endX = p.x + fx * 40, endZ = p.z + fz * 40;
+    if (best) {
+      endX = best.ref.x; endZ = best.ref.z;
+      if (best.kind === 'enemy') {
+        best.ref.health -= 34;
+        if (best.ref.health <= 0) { best.ref.dead = true; best.ref.mesh.visible = false; }
+      } else {
+        best.ref.health -= 25;
+        best.ref.flash = 0.3;
+        if (best.ref.health <= 0) { best.ref.dead = true; RM.scene.remove(best.ref.mesh); if (RM.policeMgr) RM.policeMgr.addHeat(12); }
+        else if (RM.policeMgr) RM.policeMgr.addHeat(6);
+      }
+    }
+    var geo = new THREE.BufferGeometry().setFromPoints([
+      new THREE.Vector3(p.x, 1.4, p.z), new THREE.Vector3(endX, 1.4, endZ)
+    ]);
+    var line = new THREE.Line(geo, new THREE.LineBasicMaterial({ color: 0xffe9a8 }));
+    RM.scene.add(line);
+    tracers.push({ line: line, life: 0.12 });
   }
-  state.bullets = state.bullets.filter((b) => b.life > 0);
-  state.enemies = state.enemies.filter((e) => e.health > 0);
-  for (const b of state.enemyBullets) {
-    b.x += b.vx * dt; b.y += b.vy * dt; b.life -= dt;
-    if (Math.hypot(p.x - b.x, p.y - b.y) < (p.car ? 26 : 16)) { p.health -= 9; b.life = 0; burst(b.x, b.y, '#ff6666', 5); }
-  }
-  state.enemyBullets = state.enemyBullets.filter((b) => b.life > 0);
-  // Particles
-  for (const pt of state.particles) { pt.x += pt.vx * dt; pt.y += pt.vy * dt; pt.life -= dt; }
-  state.particles = state.particles.filter((pt) => pt.life > 0);
-  // Mission flow
-  updateMission(dt);
-  // Busted / wasted
-  const over = bustedCheck(p, state.police);
-  if (over) {
-    state.mode = 'over'; state.overKind = over; audio.busted(); audio.siren(false);
-    document.getElementById('wastedTitle').textContent = over === 'busted' ? 'BUSTED' : 'WASTED';
-    document.getElementById('wastedText').textContent = over === 'busted' ? 'The Cinder Bay PD caught up with you.' : 'Dante Cole is down. The city keeps moving.';
-    document.getElementById('wasted').style.display = 'flex';
-  }
-  // Camera
-  state.cam.x = clamp(p.x - state.cam.w / 2, 0, WORLD_W - state.cam.w);
-  state.cam.y = clamp(p.y - state.cam.h / 2, 0, WORLD_H - state.cam.h);
-}
-function updateMission(dt) {
-  const ms = state.missionState; if (!ms || ms.done) return;
-  const m = ms.mission, p = state.player;
-  const target = m.kind === 'collect' && ms.collected ? { x: 600, y: 2400 } : m.kind === 'finale' && ms.collected ? { x: 410, y: 2185 } : m.target;
-  const d = Math.hypot(p.x - target.x, p.y - target.y);
-  if (m.timeLimit > 0 && m.kind === 'goto') {
-    ms.timer -= dt;
-    if (ms.timer <= 0) { showToast('Too slow! Mara gives you another shot — timer reset.'); ms.timer = m.timeLimit; }
-  }
-  if (m.kind === 'deliverCar') {
-    if (p.car && d < 130) completeMission();
-  } else if (m.kind === 'goto') {
-    if (d < 120) completeMission();
-  } else if (m.kind === 'defeat') {
-    ms.defeated = m.count - state.enemies.length;
-    state.missionHint = missionProgressText(ms);
-    if (state.enemies.length === 0) completeMission();
-  } else if (m.kind === 'collect') {
-    if (!ms.collected && d < 110) { ms.collected = true; state.police.addHeat(30, 'bank job'); audio.pickup(); showToast('Case grabbed! Lose the heat — reach the beach safehouse (gold marker).'); }
-    else if (ms.collected && d < 120) completeMission();
-    state.missionHint = missionProgressText(ms);
-  } else if (m.kind === 'finale') {
-    if (!ms.collected && d < 110) {
-      ms.collected = true; spawnEnemies(m.count, m.target.x, m.target.y);
-      state.police.addHeat(25, 'tower heist'); audio.pickup();
-      showToast('Crown case taken! Ashford guards incoming — clear them, then deliver to the Old Pier.');
-    } else if (ms.collected) {
-      ms.defeated = m.count - state.enemies.length;
-      state.missionHint = `${ms.defeated}/${m.count} guards down — then deliver to the Old Pier`;
-      if (state.enemies.length === 0) {
-        const pierD = Math.hypot(p.x - 410, p.y - 2185);
-        if (pierD < 130) completeMission();
+
+  function updateEnemies(dt) {
+    var p = RM.player;
+    for (var i = 0; i < RM.enemies.length; i++) {
+      var e = RM.enemies[i];
+      if (e.dead) continue;
+      var dx = p.x - e.x, dz = p.z - e.z, d = Math.sqrt(dx * dx + dz * dz);
+      e.mesh.rotation.y = Math.atan2(dx, dz);
+      e.shootTimer -= dt;
+      if (d < 46 && e.shootTimer <= 0) {
+        e.shootTimer = 1.6 + RM.rand() * 1.2;
+        if (RM.audio) RM.audio.enemyShoot();
+        if (RM.state.mode === 'foot') RM.state.health = Math.max(0, RM.state.health - 7);
+        else RM.state.carHealth = Math.max(0, RM.state.carHealth - 4);
+      }
+      // walk toward the player slowly
+      if (d > 10 && d < 46) {
+        e.x += (dx / d) * 2.2 * dt; e.z += (dz / d) * 2.2 * dt;
+        e.mesh.position.set(e.x, 0, e.z);
       }
     }
   }
-  if (m.kind !== 'defeat' && m.kind !== 'collect' && m.kind !== 'finale') state.missionHint = missionProgressText(ms);
-}
 
-// --- Render ---
-function draw() {
-  const cam = state.cam;
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
-  drawCity(ctx, city, cam, state.timeMin);
-  // Mission beacon
-  if (state.missionState) {
-    const m = state.missionState.mission;
-    const t = m.kind === 'collect' && state.missionState.collected ? { x: 600, y: 2400 } : m.kind === 'finale' && state.missionState.collected && state.enemies.length === 0 ? { x: 410, y: 2185 } : m.target;
-    const pulse = 26 + Math.sin(performance.now() / 220) * 8;
-    ctx.strokeStyle = '#ffd166'; ctx.lineWidth = 4;
-    ctx.beginPath(); ctx.arc(t.x - cam.x, t.y - cam.y, pulse, 0, Math.PI * 2); ctx.stroke();
-    ctx.fillStyle = '#ffd166'; ctx.beginPath(); ctx.arc(t.x - cam.x, t.y - cam.y, 7, 0, Math.PI * 2); ctx.fill();
-    ctx.fillStyle = '#111'; ctx.font = 'bold 15px sans-serif'; ctx.textAlign = 'center';
-    ctx.fillText('▼', t.x - cam.x, t.y - cam.y - pulse - 6); ctx.textAlign = 'left';
+  function checkOver() {
+    var st = RM.state;
+    if (st.over) return;
+    if (st.health <= 0) { endOver('wasted', 'WASTED', 'Rook is down. The desert keeps its secrets.'); return; }
+    if (st.mode === 'car' && st.carHealth <= 0) {
+      // car wrecked: bail out on foot, health takes a hit
+      st.carHealth = 100;
+      if (RM.car) { RM.car.health = 0; RM.car.dead = true; RM.scene.remove(RM.car.mesh); }
+      RM.tryEnterExit();
+      st.health = Math.max(1, st.health - 30);
+      if (RM.hud) RM.hud.toast('Your car is wrecked! On foot now.', 3000);
+      return;
+    }
+    if (st.mode === 'foot' && st.wanted >= 3) {
+      var near = 0;
+      for (var i = 0; i < RM.police.length; i++) {
+        if (Math.sqrt(RM.dist2(RM.player.x, RM.player.z, RM.police[i].x, RM.police[i].z)) < 7) near++;
+      }
+      if (near >= 2 && RM.player.speed < 1) endOver('busted', 'BUSTED', 'The RMPD caught up with you.');
+    }
   }
-  for (const c of state.parked) drawCar(ctx, c, cam);
-  for (const c of state.traffic) drawCar(ctx, c, cam);
-  for (const c of state.police.cars) drawCar(ctx, c, cam);
-  for (const ped of state.pedestrians) {
-    ctx.fillStyle = ped.color; ctx.beginPath(); ctx.arc(ped.x - cam.x, ped.y - cam.y, 7, 0, Math.PI * 2); ctx.fill();
-    ctx.fillStyle = '#222'; ctx.beginPath(); ctx.arc(ped.x - cam.x, ped.y - cam.y - 2, 4, 0, Math.PI * 2); ctx.fill();
-  }
-  for (const e of state.enemies) drawEnemy(ctx, e, cam);
-  const p = state.player;
-  if (p.car) drawCar(ctx, p.car, cam); else drawPlayer(ctx, p, cam);
-  // Bullets + particles
-  ctx.fillStyle = '#ffe066';
-  for (const b of state.bullets) { ctx.beginPath(); ctx.arc(b.x - cam.x, b.y - cam.y, 3.5, 0, Math.PI * 2); ctx.fill(); }
-  ctx.fillStyle = '#ff8866';
-  for (const b of state.enemyBullets) { ctx.beginPath(); ctx.arc(b.x - cam.x, b.y - cam.y, 3.5, 0, Math.PI * 2); ctx.fill(); }
-  for (const pt of state.particles) { ctx.globalAlpha = Math.max(0, pt.life * 2); ctx.fillStyle = pt.color; ctx.fillRect(pt.x - cam.x - 2, pt.y - cam.y - 2, 4, 4); }
-  ctx.globalAlpha = 1;
-  // District label near player
-  ctx.fillStyle = 'rgba(255,255,255,.85)'; ctx.font = 'bold 15px sans-serif';
-  ctx.fillText(currentDistrict(), 16, canvas.height - 16);
-  // Vignette
-  const g = ctx.createRadialGradient(canvas.width / 2, canvas.height / 2, canvas.height * 0.45, canvas.width / 2, canvas.height / 2, canvas.height * 0.85);
-  g.addColorStop(0, 'rgba(0,0,0,0)'); g.addColorStop(1, 'rgba(0,0,0,.28)');
-  ctx.fillStyle = g; ctx.fillRect(0, 0, canvas.width, canvas.height);
-}
-function currentDistrict() {
-  const p = state.player;
-  for (const d of city.districts) if (p.x >= d.x && p.x < d.x + d.w && p.y >= d.y && p.y < d.y + d.h) return d.name.toUpperCase();
-  return 'CINDER BAY';
-}
-function drawMenuBackdrop() {
-  // Attract mode: slow pan over the city behind the menu.
-  const t = performance.now() / 1000;
-  state.cam.x = clamp(1200 + Math.sin(t * 0.05) * 700, 0, WORLD_W - state.cam.w);
-  state.cam.y = clamp(900 + Math.cos(t * 0.04) * 400, 0, WORLD_H - state.cam.h);
-  drawCity(ctx, city, state.cam, state.timeMin);
-  for (const c of state.traffic) drawCar(ctx, c, state.cam);
-  for (const ped of state.pedestrians) { ctx.fillStyle = ped.color; ctx.beginPath(); ctx.arc(ped.x - state.cam.x, ped.y - state.cam.y, 7, 0, Math.PI * 2); ctx.fill(); }
-}
 
-// --- Loop ---
-let last = performance.now();
-function frame(now) {
-  const dt = Math.min(0.05, (now - last) / 1000); last = now;
-  if (state.mode === 'playing') { update(dt); draw(); updateHud(state); drawMinimap(state); }
-  else if (state.mode === 'menu') { drawMenuBackdrop(); }
-  requestAnimationFrame(frame);
-}
-
-// --- Menu wiring ---
-document.getElementById('menuMissions').innerHTML = missionListText(0);
-document.getElementById('btnNew').addEventListener('click', () => newGame(false));
-document.getElementById('btnContinue').addEventListener('click', () => {
-  if (loadSave()) newGame(true); else { showToast('No save yet — start a NEW GAME.'); newGame(false); }
-});
-document.getElementById('btnHow').addEventListener('click', () => {
-  showToast('WASD move/drive · Mouse aim · Click shoot · E steal car · P pause');
-  alert('HOW TO PLAY\n\nWalk with WASD, aim with the mouse, click to shoot.\nWalk up to a parked car and press E to steal it, then drive with WASD.\nFollow the gold marker to complete Mara\'s jobs and earn cash.\nStars mean the Cinder Bay PD is after you — lay low and they cool off.\nP pauses and saves. Your progress saves after every job.');
-});
-document.getElementById('btnResume').addEventListener('click', togglePause);
-document.getElementById('btnSave').addEventListener('click', () => { saveGame(); showToast('Game saved.'); });
-document.getElementById('btnQuit').addEventListener('click', () => {
-  saveGame(); state.mode = 'menu';
-  document.getElementById('pauseMenu').classList.add('hidden');
-  document.getElementById('menu').classList.remove('hidden');
-  document.getElementById('menuMissions').innerHTML = missionListText(state.missionIndex);
-});
-spawnPedestrians();
-// Autostart for play-testing / screenshots: ?autostart=1
-if (new URLSearchParams(location.search).get('autostart') === '1') newGame(false);
-// Screenshot staging hook: ?scene=chase|mission|onfoot (with ?autostart=1).
-// Stages a real gameplay state for screenshots; normal play is unaffected.
-const scene = new URLSearchParams(location.search).get('scene');
-if (scene && state.mode === 'playing') {
-  if (scene === 'chase') {
-    // Dante in the nearest parked car, foot down, 3 wanted stars, PD in pursuit.
-    const p = state.player;
-    let best = null, bestD = 1e9;
-    for (const c of state.parked) { const d = Math.hypot(c.x - p.x, c.y - p.y); if (d < bestD) { best = c; bestD = d; } }
-    if (best) { best.parked = false; state.parked = state.parked.filter((c) => c !== best); p.car = best; p.x = best.x; p.y = best.y; best.speed = 200; input.up = true; }
-    state.police.addHeat(50, 'screenshot staging');
-  } else if (scene === 'mission') {
-    // Jump to the Bank Courier job, Dante on foot near Harbour Bank.
-    state.missionIndex = 3; startMission(3);
-    state.player.x = 1400; state.player.y = 1460; state.player.cash = 1400;
-  } else if (scene === 'onfoot') {
-    // Dante on foot at a busy Downtown intersection, traffic on both roads.
-    state.player.x = 1080; state.player.y = 1080; state.player.cash = 500;
+  function endOver(kind, title, text) {
+    var st = RM.state;
+    st.over = true; st.overKind = kind;
+    el('wastedTitle').textContent = title;
+    el('wastedText').textContent = text;
+    el('wasted').style.display = 'flex';
+    if (RM.audio) RM.audio.busted();
+    if (RM.policeMgr) RM.policeMgr.clear();
   }
-}
-requestAnimationFrame(frame);
+
+  var hudTimer = 0, mapTimer = 0;
+  function loop(now) {
+    requestAnimationFrame(loop);
+    var dt = Math.min(0.05, (now - lastTime) / 1000 || 0.016);
+    lastTime = now;
+    if (!RM.state.paused) {
+      RM.state.time += dt;
+      if (RM.state.started && !RM.state.over) {
+        RM.state.playTime += dt;
+        if (RM.state.mode === 'car' && RM.car) {
+          RM.updatePlayerCar(RM.car, input, dt);
+          // The player rides in the car: keep player position in sync so
+          // police, missions and the minimap track the moving car.
+          RM.player.x = RM.car.x; RM.player.z = RM.car.z;
+          RM.state.speed = RM.car.speed;
+          RM.state.carHealth = RM.car.health;
+        } else {
+          RM.updatePlayerOnFoot(RM.player, input, dt);
+          RM.state.speed = RM.player.speed;
+        }
+        RM.updateTraffic(dt);
+        RM.updatePeds(RM.peds, dt, { x: RM.player.x, z: RM.player.z }, RM.state.mode === 'car' && RM.car ? RM.car.speed : RM.player.speed);
+        RM.policeMgr.update(dt);
+        RM.missionMgr.update(dt);
+        updateEnemies(dt);
+        checkOver();
+        if (RM.audio) RM.audio.setEngine(RM.state.mode === 'car' && RM.car ? Math.abs(RM.car.speed) / 38 : 0);
+        // clouds drift
+        RM.city.clouds.forEach(function (c, i) { c.position.x += dt * (1 + i * 0.2); if (c.position.x > 560) c.position.x = -560; });
+      }
+      RM.updateCamera(dt);
+      // tracers fade
+      for (var i = tracers.length - 1; i >= 0; i--) {
+        tracers[i].life -= dt;
+        if (tracers[i].life <= 0) { RM.scene.remove(tracers[i].line); tracers.splice(i, 1); }
+      }
+      hudTimer += dt;
+      if (hudTimer > 0.12) { hudTimer = 0; RM.hud.update(); }
+      mapTimer += dt;
+      if (mapTimer > 0.15) { mapTimer = 0; RM.hud.drawMinimap(); }
+    }
+    RM.renderer.render(RM.scene, RM.camera);
+  }
+
+  window.addEventListener('DOMContentLoaded', init);
+  // If the script loads after DOMContentLoaded (it is at the end of body), boot now.
+  if (document.readyState !== 'loading') init();
+})();

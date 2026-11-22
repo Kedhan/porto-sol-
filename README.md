@@ -4,7 +4,9 @@
 [![rank](https://make.fun/badge/gta6-01/Kedhan/porto-sol-/rank.svg)](https://make.fun/bounty/gta6-01/leaderboard?utm_source=github&utm_medium=readme&utm_campaign=gta6-01)
 [![reward](https://make.fun/badge/gta6-01/Kedhan/porto-sol-/reward.svg)](https://make.fun/bounty/gta6-01?utm_source=github&utm_medium=readme&utm_campaign=gta6-01)
 
-Cinder Bay is an original 2D top-down open-world crime game set in the fictional sun-soaked harbour city of Cinder Bay. Play as Dante Cole: explore the city on foot and by car, steal cars, dodge traffic and pedestrians, build a wanted level and outrun the Cinder Bay PD, and work through five story missions for fixer Mara Voss — with a live HUD, minimap, save game, and synth sound. No assets, names, or characters from any commercial game.
+Red Mesa Heat is an original 3D open-world crime game set in the fictional sun-baked desert city of Red Mesa. Play as Rook Calloway: explore the city on foot and by car in three.js, steal cars, dodge traffic and pedestrians, build a wanted level and outrun the Red Mesa PD (with a police helicopter at 4–5 stars), and work through five story missions for fixer Ilsa Kade — with a live HUD, minimap, save game, and synth sound. No assets, names, or characters from any commercial game.
+
+> Note: the first entry from this repo, the 2D game Cinder Bay, lives at the earlier commit 0519c53. This commit replaces `game/` with the 3D game Red Mesa Heat as a separate entry.
 
 ## Run it
 

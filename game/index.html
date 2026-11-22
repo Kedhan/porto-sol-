@@ -3,31 +3,32 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>CINDER BAY — Open City Crime</title>
+<title>RED MESA HEAT — Open-World Crime in 3D</title>
 <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-<canvas id="game" width="1280" height="720"></canvas>
+<div id="game"></div>
 <canvas id="minimap" width="210" height="150"></canvas>
-<div class="hud" id="hudTopLeft"><div class="cash" id="hudCash">$0</div><div id="hudHealth">DANTE COLE</div><div id="healthBar"><div id="healthFill"></div></div><div id="hudAmmo">PISTOL ∞</div></div>
-<div class="hud" id="hudTopRight"><div id="hudStars">☆☆☆☆☆</div><div class="clock" id="hudClock">10:24 AM · DAY 1</div></div>
-<div class="hud" id="hudObjective"><b id="hudMissionTitle">CINDER BAY</b><div id="hudMissionText">Press NEW GAME to start Dante's story.</div></div>
+<div class="hud" id="hudTopLeft"><div class="cash" id="hudCash">$250</div><div id="hudHealth">ROOK CALLOWAY</div><div id="healthBar"><div id="healthFill"></div></div><div id="hudAmmo">PISTOL · CLICK TO SHOOT</div></div>
+<div class="hud" id="hudTopRight"><div id="hudStars">☆☆☆☆☆</div><div class="clock" id="hudClock">RED MESA · 6:47 PM</div></div>
+<div class="hud" id="hudObjective"><b id="hudMissionTitle">RED MESA HEAT</b><div id="hudMissionText">Press NEW GAME to start Rook's story.</div></div>
 <div class="hud" id="hudSpeed"><span id="hudSpeedNum">0</span><small id="hudSpeedLabel">ON FOOT · km/h</small></div>
-<div class="hud" id="hudHint">WASD move / drive · Mouse aim · Click shoot · E enter / exit car · R reload · P pause · M mute</div>
+<div class="hud" id="hudHint">WASD move / drive · Mouse drag camera · Click shoot · E enter / exit car · Shift sprint / boost · R radio · M mute · P pause</div>
 <div class="hud" id="toast"></div>
-<div id="wasted"><h1 id="wastedTitle">BUSTED</h1><p id="wastedText">The Cinder Bay PD caught up with you.</p><p>Press ENTER to respawn at the clinic — $200 bail.</p></div>
+<div id="wasted"><h1 id="wastedTitle">BUSTED</h1><p id="wastedText">The RMPD caught up with you.</p><p>Press ENTER to respawn at the clinic — $200 bail.</p></div>
 
 <div class="overlay" id="menu">
   <div class="panel">
-    <h1>CINDER <span>BAY</span></h1>
-    <h2>AN OPEN-CITY CRIME STORY · SUN · SAND · SIRENS</h2>
-    <p class="story"><b>Dante Cole</b> is back in Cinder Bay — a sun-soaked harbour city run by the
-    Ashford crew. His fixer <b>Mara Voss</b> has five jobs that pay enough to buy his way out.
-    Steal cars, outrun the Cinder Bay PD, and finish the Crown job before the city eats you alive.</p>
+    <h1>RED MESA <span>HEAT</span></h1>
+    <h2>AN OPEN-WORLD CRIME STORY IN 3D · SUN · SAND · SIRENS</h2>
+    <p class="story"><b>Rook Calloway</b> is back in Red Mesa — a sun-baked desert city of red-rock
+    mesas, highways and neon motels, run by crews who pay in cash and collect in blood.
+    His fixer <b>Ilsa Kade</b> has five jobs that pay enough to buy his way out.
+    Steal cars, outrun the Red Mesa PD, and finish the Last Mesa job before the city eats you alive.</p>
     <div class="controls">
-      <div><b>WASD / Arrows</b> — walk &amp; drive</div><div><b>Mouse + Click</b> — aim &amp; shoot</div>
+      <div><b>WASD / Arrows</b> — walk &amp; drive</div><div><b>Mouse drag + Click</b> — camera &amp; shoot</div>
       <div><b>E</b> — steal / enter / exit car</div><div><b>Shift</b> — sprint / boost</div>
-      <div><b>R</b> — reload pistol</div><div><b>P / Esc</b> — pause &amp; save</div>
+      <div><b>R</b> — radio on / off</div><div><b>P / Esc</b> — pause &amp; save</div>
       <div><b>M</b> — mute sound</div><div><b>Enter</b> — respawn after busted</div>
     </div>
     <div class="missions" id="menuMissions"></div>
@@ -36,14 +37,14 @@
       <button id="btnContinue" class="secondary">CONTINUE</button>
       <button id="btnHow" class="secondary">HOW TO PLAY</button>
     </div>
-    <p class="small">Cinder Bay is an original game. All characters, places and music are invented — no Rockstar content. Best played in desktop Chrome, keyboard + mouse. Saves locally in your browser.</p>
+    <p class="small">Red Mesa Heat is an original game. All characters, places and music are invented — no Rockstar content. Best played in desktop Chrome, keyboard + mouse. Saves locally in your browser.</p>
   </div>
 </div>
 
 <div class="overlay hidden" id="pauseMenu">
   <div class="panel">
     <h1>PAUSED</h1>
-    <h2>CINDER BAY · DANTE COLE</h2>
+    <h2>RED MESA · ROOK CALLOWAY</h2>
     <p id="pauseStats">Cash $0 · Missions 0/5 complete.</p>
     <div class="btnrow">
       <button id="btnResume">RESUME</button>
@@ -54,6 +55,16 @@
   </div>
 </div>
 
-<script type="module" src="src/main.js"></script>
+<script src="vendor/three.min.js"></script>
+<script src="src/util.js"></script>
+<script src="src/audio.js"></script>
+<script src="src/city.js"></script>
+<script src="src/vehicles.js"></script>
+<script src="src/traffic.js"></script>
+<script src="src/player.js"></script>
+<script src="src/police.js"></script>
+<script src="src/missions.js"></script>
+<script src="src/hud.js"></script>
+<script src="src/main.js"></script>
 </body>
 </html>

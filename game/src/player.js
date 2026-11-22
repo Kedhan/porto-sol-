@@ -1,56 +1,143 @@
-// Dante Cole on foot: movement, sprint, shooting and drawing.
-import { clamp } from './util.js';
-import { resolveBuildingCollision } from './city.js';
+// Red Mesa Heat — player.js
+// Rook Calloway on foot: movement, third-person camera, and
+// entering / exiting cars (E). Stealing a parked car raises the heat.
+(function () {
+  'use strict';
+  var THREE = window.THREE;
 
-export function createPlayer(x, y) {
-  return {
-    x, y, angle: 0, health: 100, cash: 0, speed: 0,
-    car: null, ammo: 12, reloadTimer: 0, shootCooldown: 0,
-    walkPhase: 0, name: 'Dante Cole',
-  };
-}
-export function updatePlayerOnFoot(p, input, dt, city) {
-  const sprint = input.boost ? 1.55 : 1;
-  const spd = 230 * sprint;
-  let dx = (input.right ? 1 : 0) - (input.left ? 1 : 0);
-  let dy = (input.down ? 1 : 0) - (input.up ? 1 : 0);
-  const len = Math.hypot(dx, dy);
-  if (len > 0) { dx /= len; dy /= len; p.walkPhase += dt * 11; }
-  p.x += dx * spd * dt; p.y += dy * spd * dt;
-  p.speed = len > 0 ? spd : 0;
-  p.angle = Math.atan2(input.mouseY - (p.y), input.mouseX - (p.x));
-  if (resolveBuildingCollision(city, p, 16)) { /* bumped a wall */ }
-  p.shootCooldown = Math.max(0, p.shootCooldown - dt);
-  p.reloadTimer = Math.max(0, p.reloadTimer - dt);
-  if (p.reloadTimer === 0 && p.ammo === 0) { p.ammo = 12; }
-  return p;
-}
-export function drawPlayer(ctx, p, cam) {
-  const x = p.x - cam.x, y = p.y - cam.y;
-  ctx.save(); ctx.translate(x, y);
-  // Shadow + body
-  ctx.fillStyle = 'rgba(0,0,0,.35)'; ctx.beginPath(); ctx.ellipse(0, 10, 13, 6, 0, 0, Math.PI * 2); ctx.fill();
-  ctx.rotate(p.angle);
-  const bob = Math.sin(p.walkPhase) * 1.5;
-  ctx.fillStyle = '#2b2b3a'; ctx.fillRect(-8, -9 + bob * 0.2, 16, 18); // jacket
-  ctx.fillStyle = '#e8b98a'; ctx.beginPath(); ctx.arc(8, 0, 7, 0, Math.PI * 2); ctx.fill(); // head
-  ctx.fillStyle = '#1a1a1a'; ctx.beginPath(); ctx.arc(9, -3, 6, Math.PI, Math.PI * 2); ctx.fill(); // hair
-  ctx.fillStyle = '#333'; ctx.fillRect(10, -3, 14, 5); // pistol
-  ctx.fillStyle = '#ffd166'; ctx.fillRect(10, -3, 3, 5);
-  ctx.restore();
-  // Aim line (short, subtle)
-  ctx.strokeStyle = 'rgba(255,255,255,.35)'; ctx.lineWidth = 1.5;
-  ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + Math.cos(p.angle) * 42, y + Math.sin(p.angle) * 42); ctx.stroke();
-}
-export function drawEnemy(ctx, e, cam) {
-  const x = e.x - cam.x, y = e.y - cam.y;
-  ctx.save(); ctx.translate(x, y); ctx.rotate(e.angle);
-  ctx.fillStyle = 'rgba(0,0,0,.35)'; ctx.beginPath(); ctx.ellipse(0, 10, 13, 6, 0, 0, Math.PI * 2); ctx.fill();
-  ctx.fillStyle = '#7a1f1f'; ctx.fillRect(-8, -9, 16, 18);
-  ctx.fillStyle = '#d8a070'; ctx.beginPath(); ctx.arc(8, 0, 7, 0, Math.PI * 2); ctx.fill();
-  ctx.fillStyle = '#111'; ctx.fillRect(10, -3, 13, 5);
-  ctx.restore();
-  // Health bar
-  ctx.fillStyle = '#000'; ctx.fillRect(x - 14, y - 24, 28, 5);
-  ctx.fillStyle = '#ff4444'; ctx.fillRect(x - 14, y - 24, 28 * Math.max(0, e.health / 60), 5);
-}
+  function makePlayerMesh() {
+    var g = new THREE.Group();
+    // jacket, jeans, boots, head — Rook in a rust-red jacket.
+    var torso = new THREE.Mesh(new THREE.BoxGeometry(0.66, 0.78, 0.36), new THREE.MeshLambertMaterial({ color: 0xa83a2a }));
+    torso.position.y = 1.08; g.add(torso);
+    var head = new THREE.Mesh(new THREE.SphereGeometry(0.27, 12, 10), new THREE.MeshLambertMaterial({ color: 0xe8b98a }));
+    head.position.y = 1.72; g.add(head);
+    var hair = new THREE.Mesh(new THREE.SphereGeometry(0.28, 12, 8, 0, Math.PI * 2, 0, Math.PI * 0.55), new THREE.MeshLambertMaterial({ color: 0x1a1a1a }));
+    hair.position.y = 1.76; g.add(hair);
+    var legMat = new THREE.MeshLambertMaterial({ color: 0x2b3a5a });
+    var l1 = new THREE.Mesh(new THREE.BoxGeometry(0.26, 0.72, 0.26), legMat);
+    l1.position.set(-0.17, 0.36, 0); g.add(l1);
+    var l2 = l1.clone(); l2.position.x = 0.17; g.add(l2);
+    // pistol in the right hand
+    var gun = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.12, 0.42), new THREE.MeshLambertMaterial({ color: 0x111111 }));
+    gun.position.set(0.38, 1.05, 0.3); g.add(gun);
+    g.userData.leg1 = l1; g.userData.leg2 = l2;
+    return g;
+  }
+
+  function createPlayer(x, z) {
+    var mesh = makePlayerMesh();
+    mesh.position.set(x, 0, z);
+    RM.scene.add(mesh);
+    var p = {
+      mesh: mesh, x: x, z: z, heading: 0, speed: 0,
+      walkPhase: 0, car: null, shootCooldown: 0, name: 'Rook Calloway'
+    };
+    RM.player = p;
+    return p;
+  }
+
+  // On-foot movement, relative to the camera yaw.
+  function updatePlayerOnFoot(p, input, dt) {
+    var sprint = input.boost ? 1.6 : 1;
+    var spd = 5.2 * sprint;
+    var fwdX = Math.sin(RM.camYaw), fwdZ = Math.cos(RM.camYaw);
+    var rightX = Math.cos(RM.camYaw), rightZ = -Math.sin(RM.camYaw);
+    var mx = 0, mz = 0;
+    if (input.up) { mx += fwdX; mz += fwdZ; }
+    if (input.down) { mx -= fwdX; mz -= fwdZ; }
+    if (input.right) { mx += rightX; mz += rightZ; }
+    if (input.left) { mx -= rightX; mz -= rightZ; }
+    var len = Math.sqrt(mx * mx + mz * mz);
+    if (len > 0) {
+      mx /= len; mz /= len;
+      p.heading = Math.atan2(mx, mz);
+      p.walkPhase += dt * 11;
+      p.speed = spd;
+    } else {
+      p.speed = 0;
+    }
+    var nx = p.x + mx * spd * dt, nz = p.z + mz * spd * dt;
+    var pos = { x: nx, z: nz };
+    if (RM.resolveCollision(pos, 0.9)) { /* bumped a wall */ } else { p.x = nx; p.z = nz; }
+    p.mesh.position.set(p.x, 0, p.z);
+    p.mesh.rotation.y = p.heading;
+    var swing = len > 0 ? Math.sin(p.walkPhase) * 0.55 : 0;
+    p.mesh.userData.leg1.rotation.x = swing;
+    p.mesh.userData.leg2.rotation.x = -swing;
+    p.shootCooldown = Math.max(0, p.shootCooldown - dt);
+    return p;
+  }
+
+  // Third-person camera: chase behind the car, or over the shoulder on foot.
+  function updateCamera(dt) {
+    var cam = RM.camera;
+    var target = RM.player;
+    var dist = RM.state.mode === 'car' ? 9 : 6.5;
+    var height = RM.state.mode === 'car' ? 3.9 : 3.0;
+    var lookY = 1.6;
+    var px, pz, heading;
+    if (RM.state.mode === 'car' && RM.car) {
+      px = RM.car.x; pz = RM.car.z; heading = RM.car.heading;
+      // camera yaw follows the car's heading, smoothed
+      RM.camYaw = RM.angleLerp(RM.camYaw, heading, 1 - Math.pow(0.001, dt));
+    } else {
+      px = target.x; pz = target.z;
+    }
+    var cx = px - Math.sin(RM.camYaw) * dist;
+    var cz = pz - Math.cos(RM.camYaw) * dist;
+    var cy = height + Math.sin(RM.camPitch) * dist * 0.6;
+    cam.position.x = RM.lerp(cam.position.x, cx, 1 - Math.pow(0.0001, dt));
+    cam.position.y = RM.lerp(cam.position.y, cy, 1 - Math.pow(0.0001, dt));
+    cam.position.z = RM.lerp(cam.position.z, cz, 1 - Math.pow(0.0001, dt));
+    cam.lookAt(px, lookY, pz);
+  }
+
+  // Enter the nearest car within 5m; exit the current car beside the road.
+  function tryEnterExit() {
+    var p = RM.player, st = RM.state;
+    if (st.mode === 'foot') {
+      var best = null, bestD = 5.5;
+      var all = RM.parked.concat(RM.cars);
+      for (var i = 0; i < all.length; i++) {
+        var c = all[i];
+        if (c.dead || c.police) continue;
+        var d = Math.sqrt(RM.dist2(p.x, p.z, c.x, c.z));
+        if (d < bestD) { bestD = d; best = c; }
+      }
+      if (!best) { if (RM.hud) RM.hud.toast('No car close enough — walk to one and press E.', 2000); return; }
+      var stolen = !!best.parked;
+      if (stolen) {
+        best.parked = false;
+        RM.parked = RM.parked.filter(function (c) { return c !== best; });
+        st.carsStolen++;
+        if (RM.policeMgr) RM.policeMgr.addHeat(10, 'stolen car');
+        if (RM.audio) RM.audio.horn();
+        if (RM.hud) RM.hud.toast('Car stolen! The RMPD is watching.', 2400);
+        if (RM.missionMgr) RM.missionMgr.onEvent('steal');
+      }
+      p.car = best; RM.car = best; st.mode = 'car'; st.carHealth = best.health;
+      p.mesh.visible = false;
+      RM.camYaw = best.heading;
+      if (RM.audio) RM.audio.pickup();
+    } else {
+      var car = RM.car;
+      if (!car) return;
+      car.health = st.carHealth;
+      // step out to the side of the car
+      var sx = car.x + Math.cos(car.heading) * 2.6, sz = car.z - Math.sin(car.heading) * 2.6;
+      var pos = { x: sx, z: sz };
+      RM.resolveCollision(pos, 0.9);
+      p.x = pos.x; p.z = pos.z; p.heading = car.heading;
+      p.mesh.visible = true;
+      p.mesh.position.set(p.x, 0, p.z);
+      p.car = null; RM.car = null; st.mode = 'foot'; st.speed = 0;
+      RM.camYaw = p.heading;
+    }
+  }
+
+  RM.createPlayer = createPlayer;
+  RM.updatePlayerOnFoot = updatePlayerOnFoot;
+  RM.updateCamera = updateCamera;
+  RM.tryEnterExit = tryEnterExit;
+})();
