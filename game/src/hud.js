@@ -1,138 +1,223 @@
-// Red Mesa Heat — hud.js
-// HUD readouts, the live minimap, toasts, and the shared $ lookup.
-// Reads RM.state / RM.player / RM.car / RM.policeMgr / RM.missionMgr and
-// writes only into the DOM ids defined in game/index.html.
+// hud.js — Red Mesa Heat HUD, minimap and toasts (round 3 rewrite).
+// Own implementation: cached DOM handles, star row, 2D canvas minimap.
 (function () {
   'use strict';
-  var toastTimer = null;
+
+  var els = null;          // cached DOM handles, grabbed lazily
+  var minimapClock = 0;    // throttle: redraw the minimap ~8x per second
+  var MAP_PAD = 40;        // extra metres drawn around the city edge
 
   function $(id) { return document.getElementById(id); }
 
-  // Called ~8x per second from the main loop: cash, name, health bar,
-  // ammo hint, wanted stars, clock, speed, and the mission objective.
-  function updateHud() {
-    var st = RM.state, p = RM.player;
-    if (!p) return;
-    $('hudCash').textContent = RM.fmtCash(st.cash);
-    $('hudHealth').textContent = p.name.toUpperCase() +
-      (st.mode === 'car' && RM.car ? ' · ' + RM.car.name.toUpperCase() : '');
-    var hp = st.mode === 'car' ? st.carHealth : st.health;
-    var fill = $('healthFill');
-    fill.style.width = RM.clamp(hp, 0, 100) + '%';
-    fill.style.background = hp > 50
-      ? 'linear-gradient(90deg,#37e05a,#a8ff6a)'
-      : hp > 25
-        ? 'linear-gradient(90deg,#ffb347,#ffd166)'
-        : 'linear-gradient(90deg,#ff5252,#ff8a80)';
-    $('hudAmmo').textContent = st.mode === 'car'
-      ? 'IN CAR · E TO EXIT'
-      : 'PISTOL · CLICK TO SHOOT · E ENTER CAR';
-    var stars = $('hudStars');
-    stars.textContent = RM.policeMgr ? RM.policeMgr.wantedStars() : '☆☆☆☆☆';
-    stars.style.color = st.wanted > 0 ? '#ffd166' : '#ffffff';
-    $('hudClock').textContent = 'RED MESA · 6:47 PM · DAY 1';
-    var speed = st.mode === 'car' && RM.car
-      ? Math.abs(Math.round(RM.car.speed * 3.6))
-      : Math.round(p.speed * 3.6);
-    $('hudSpeedNum').textContent = speed;
-    $('hudSpeedLabel').textContent = st.mode === 'car' && RM.car
-      ? RM.car.name.toUpperCase() + ' · km/h'
-      : 'ON FOOT · km/h';
-    var m = RM.missionMgr && RM.missionMgr.state ? RM.missionMgr.state.mission : null;
-    if (m) {
-      $('hudMissionTitle').textContent = 'JOB ' + m.id + ' · ' + m.title;
-      var extra = RM.missionMgr.progressText();
-      $('hudMissionText').textContent = m.objective + (extra ? ' — ' + extra : '');
-    } else if (st.missionsDone >= 5) {
-      $('hudMissionTitle').textContent = 'RED MESA — FREE ROAM';
-      $('hudMissionText').textContent = 'All jobs done! Free roam, steal cars, explore Red Mesa.';
-    } else {
-      $('hudMissionTitle').textContent = 'RED MESA HEAT';
-      $('hudMissionText').textContent = 'Press NEW GAME to start Rook\'s story.';
+  function grab() {
+    if (!els) {
+      els = {
+        cash: $('cash'),
+        healthFill: $('health-fill'),
+        healthText: $('health-text'),
+        stars: $('stars'),
+        speed: $('speed'),
+        mission: $('mission-text'),
+        msg: $('message'),
+        map: $('minimap')
+      };
     }
+    return els;
   }
 
-  // A short message banner at the bottom of the screen.
-  function toast(text, ms) {
-    var el = $('toast');
-    el.textContent = text;
-    el.style.opacity = '1';
-    clearTimeout(toastTimer);
-    toastTimer = setTimeout(function () { el.style.opacity = '0'; }, ms || 2600);
+  function healthColor(h) {
+    if (h > 55) return '#3ddc5a';
+    if (h > 25) return '#ffb02e';
+    return '#ff4d3d';
   }
 
-  // Top-down map: mesas as a border, the street grid, park and fountain,
-  // the pulsing mission marker, traffic, police, enemies, pedestrians,
-  // and a white arrow for Rook that rotates with his heading.
-  function drawMinimap() {
-    var c = $('minimap');
-    if (!c || !RM.player) return;
-    var ctx = c.getContext('2d');
-    var W = c.width, H = c.height, MAP = RM.MAP;
-    var sx = W / (MAP * 2), sy = H / (MAP * 2);
-    function X(x) { return (x + MAP) * sx; }
-    function Z(z) { return (z + MAP) * sy; }
-    function dot(x, z, color, r) {
-      ctx.fillStyle = color;
-      ctx.beginPath();
-      ctx.arc(X(x), Z(z), r, 0, Math.PI * 2);
-      ctx.fill();
-    }
-    ctx.fillStyle = '#5a3a22';
-    ctx.fillRect(0, 0, W, H);
-    // red-rock mesas ringing the city
-    ctx.fillStyle = '#b5502a';
-    ctx.fillRect(0, 0, W, 8);
-    ctx.fillRect(0, H - 8, W, 8);
-    ctx.fillRect(0, 0, 8, H);
-    ctx.fillRect(W - 8, 0, 8, H);
-    // street grid
-    ctx.strokeStyle = '#3a3a42';
-    ctx.lineWidth = 4;
-    RM.city.roads.forEach(function (r) {
-      ctx.beginPath(); ctx.moveTo(X(r), 0); ctx.lineTo(X(r), H); ctx.stroke();
-      ctx.beginPath(); ctx.moveTo(0, Z(r)); ctx.lineTo(W, Z(r)); ctx.stroke();
-    });
-    // central park + fountain
-    ctx.fillStyle = '#4a7a3d';
-    ctx.fillRect(X(13), Z(13), 64 * sx, 64 * sy);
-    ctx.fillStyle = '#7fd8e8';
-    ctx.beginPath(); ctx.arc(X(45), Z(45), 4, 0, Math.PI * 2); ctx.fill();
-    // mission target, pulsing gold
-    if (RM.missionMgr && RM.missionMgr.state) {
-      var t = RM.missionMgr.targetNow();
-      if (t) {
-        var pulse = 5 + Math.sin(performance.now() / 200) * 2;
-        dot(t.x, t.z, '#ffd166', pulse);
-        ctx.strokeStyle = '#ffffff';
-        ctx.lineWidth = 1.5;
+  function starRow(wanted) {
+    var out = '';
+    for (var i = 0; i < 5; i++) out += (i < wanted) ? '★' : '☆';
+    return out;
+  }
+
+  function clockText(seconds) {
+    var total = Math.max(0, Math.floor(seconds));
+    var mm = Math.floor(total / 60);
+    var ss = total % 60;
+    return (mm < 10 ? '0' : '') + mm + ':' + (ss < 10 ? '0' : '') + ss;
+  }
+
+  RM.hud = {
+    update: function (dt) {
+      var e = grab();
+      var s = RM.state;
+
+      if (e.cash) e.cash.textContent = RM.fmtCash(s.cash);
+
+      var hp = (s.mode === 'car') ? s.carHealth : s.health;
+      if (e.healthFill) {
+        e.healthFill.style.width = RM.clamp(hp, 0, 100) + '%';
+        e.healthFill.style.background = healthColor(hp);
+      }
+      if (e.healthText) {
+        e.healthText.textContent = (s.mode === 'car' ? 'CAR ' : '') + Math.round(hp) + ' HP';
+      }
+
+      var wanted = (RM.policeMgr && RM.policeMgr.wantedStars)
+        ? RM.policeMgr.wantedStars() : (s.wanted || 0);
+      if (e.stars) {
+        e.stars.textContent = starRow(wanted);
+        e.stars.style.color = wanted > 0 ? '#ffd23e' : '#8a7f72';
+      }
+
+      if (e.speed) e.speed.textContent = Math.round((s.speed || 0) * 3.6) + ' km/h';
+
+      if (e.mission) {
+        e.mission.textContent = (RM.missionMgr && RM.missionMgr.progressText)
+          ? RM.missionMgr.progressText()
+          : (s.objective || 'Free roam — cause some trouble.');
+      }
+
+      // Toast: visible while the message window is open, then fades.
+      if (e.msg) {
+        if (s.time < s.messageUntil) {
+          e.msg.textContent = s.message || '';
+          e.msg.style.opacity = '1';
+        } else {
+          e.msg.style.opacity = '0';
+        }
+      }
+
+      minimapClock += dt;
+      if (minimapClock > 0.12) {
+        minimapClock = 0;
+        this.drawMinimap();
+      }
+    },
+
+    toast: function (msg) {
+      RM.state.message = msg;
+      RM.state.messageUntil = RM.state.time + 4;
+    },
+
+    setObjective: function (text) {
+      RM.state.objective = text;
+      var e = grab();
+      if (e.mission) e.mission.textContent = text;
+    },
+
+    drawMinimap: function () {
+      var e = grab();
+      var canvas = e.map;
+      if (!canvas) return;
+      var ctx = canvas.getContext('2d');
+      if (!ctx) return;
+      var size = canvas.width;
+      var span = RM.MAP + MAP_PAD * 2;
+      var scale = size / span;
+      function toX(x) { return size / 2 + x * scale; }
+      function toY(z) { return size / 2 + z * scale; }
+
+      // Sand background + mesa-red border.
+      ctx.fillStyle = '#241a10';
+      ctx.fillRect(0, 0, size, size);
+      ctx.strokeStyle = '#b4502e';
+      ctx.lineWidth = 3;
+      ctx.strokeRect(2, 2, size - 4, size - 4);
+
+      // Road grid.
+      ctx.strokeStyle = '#5d4a33';
+      ctx.lineWidth = 2;
+      var roads = (RM.city && RM.city.roads) || [];
+      for (var i = 0; i < roads.length; i++) {
+        var r = roads[i];
         ctx.beginPath();
-        ctx.arc(X(t.x), Z(t.z), pulse + 3, 0, Math.PI * 2);
+        if (r.axis === 'x') {
+          ctx.moveTo(toX(-RM.MAP / 2), toY(r.at));
+          ctx.lineTo(toX(RM.MAP / 2), toY(r.at));
+        } else {
+          ctx.moveTo(toX(r.at), toY(-RM.MAP / 2));
+          ctx.lineTo(toX(r.at), toY(RM.MAP / 2));
+        }
         ctx.stroke();
       }
+
+      // Park patch.
+      var park = (RM.city && RM.city.landmarks) ? RM.city.landmarks.park : null;
+      if (park) {
+        ctx.fillStyle = '#2f6b34';
+        ctx.fillRect(toX(park.x) - 7, toY(park.z) - 7, 14, 14);
+      }
+
+      // Buildings as dark blocks.
+      ctx.fillStyle = '#3a2c1e';
+      var blds = RM.buildings || [];
+      for (var b = 0; b < blds.length; b++) {
+        var bb = blds[b];
+        ctx.fillRect(toX(bb.minX), toY(bb.minZ),
+          Math.max(2, (bb.maxX - bb.minX) * scale),
+          Math.max(2, (bb.maxZ - bb.minZ) * scale));
+      }
+
+      // Pulsing mission marker at the active target.
+      var target = null;
+      if (RM.missionMgr && RM.missionMgr._activeTarget) {
+        var tname = RM.missionMgr._activeTarget();
+        if (tname && RM.city && RM.city.landmarks) target = RM.city.landmarks[tname];
+      }
+      if (target) {
+        var pulse = 5 + 2.5 * Math.sin(RM.state.time * 4);
+        ctx.fillStyle = '#ffd23e';
+        ctx.beginPath();
+        ctx.arc(toX(target.x), toY(target.z), pulse, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = '#fff3c4';
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+      }
+
+      // Traffic: sand dots. Police: red dots. Pedestrians: faint grey.
+      ctx.fillStyle = '#d8c08a';
+      var cars = RM.trafficCars || [];
+      for (var c = 0; c < cars.length; c++) {
+        if (!cars[c].group) continue;
+        ctx.fillRect(toX(cars[c].group.position.x) - 1.5, toY(cars[c].group.position.z) - 1.5, 3, 3);
+      }
+      ctx.fillStyle = '#ff4d3d';
+      var cops = RM.policeCars || [];
+      for (var p = 0; p < cops.length; p++) {
+        if (!cops[p].group) continue;
+        ctx.beginPath();
+        ctx.arc(toX(cops[p].group.position.x), toY(cops[p].group.position.z), 2.5, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.fillStyle = 'rgba(200, 200, 200, 0.55)';
+      var peds = RM.peds || [];
+      for (var d = 0; d < peds.length; d++) {
+        if (!peds[d].group) continue;
+        ctx.fillRect(toX(peds[d].group.position.x) - 1, toY(peds[d].group.position.z) - 1, 2, 2);
+      }
+
+      // Player arrow, rotated by heading.
+      var px = 0, pz = 0, heading = 0;
+      if (RM.state.mode === 'car' && RM.car && RM.car.group) {
+        px = RM.car.group.position.x; pz = RM.car.group.position.z; heading = RM.car.heading || 0;
+      } else if (RM.player && RM.player.group) {
+        px = RM.player.group.position.x; pz = RM.player.group.position.z; heading = RM.player.heading || 0;
+      }
+      ctx.save();
+      ctx.translate(toX(px), toY(pz));
+      ctx.rotate(-heading + Math.PI);
+      ctx.fillStyle = '#ffffff';
+      ctx.beginPath();
+      ctx.moveTo(0, -6);
+      ctx.lineTo(4.5, 5);
+      ctx.lineTo(-4.5, 5);
+      ctx.closePath();
+      ctx.fill();
+      ctx.restore();
+
+      // Clock, bottom-left of the minimap.
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.85)';
+      ctx.font = '11px monospace';
+      ctx.fillText(clockText(RM.state.time), 6, size - 7);
     }
-    RM.cars.forEach(function (car) { dot(car.x, car.z, '#9db8d8', 2); });
-    RM.police.forEach(function (car) { dot(car.x, car.z, '#3a7bff', 3.5); });
-    RM.enemies.forEach(function (e) { if (!e.dead) dot(e.x, e.z, '#ff4444', 3); });
-    RM.peds.forEach(function (p) { if (!p.dead) dot(p.x, p.z, '#cfe8c0', 1.5); });
-    // player arrow, rotated by heading
-    var p = RM.player;
-    ctx.save();
-    ctx.translate(X(p.x), Z(p.z));
-    ctx.rotate(Math.atan2(Math.sin(p.heading), -Math.cos(p.heading)) + Math.PI);
-    ctx.fillStyle = '#ffffff';
-    ctx.beginPath();
-    ctx.moveTo(0, -6); ctx.lineTo(4.5, 5); ctx.lineTo(-4.5, 5);
-    ctx.closePath(); ctx.fill();
-    ctx.fillStyle = '#ff5e62';
-    ctx.beginPath(); ctx.arc(0, 0, 2.5, 0, Math.PI * 2); ctx.fill();
-    ctx.restore();
-  }
-
-  function setObjective(m) {
-    $('hudMissionTitle').textContent = 'JOB ' + m.id + ' · ' + m.title;
-    $('hudMissionText').textContent = m.objective;
-  }
-
-  RM.hud = { update: updateHud, toast: toast, drawMinimap: drawMinimap, setObjective: setObjective };
+  };
 })();

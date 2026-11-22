@@ -1,40 +1,59 @@
-:root { color-scheme: dark; }
+/* Red Mesa Heat — interface styling, written fresh for round 3.
+   Desert palette: sand, terracotta, dusk purple. HUD corners hold
+   cash (top-left), stars (top-right), health (bottom-left) and the
+   minimap (bottom-right). */
 * { box-sizing: border-box; margin: 0; padding: 0; }
-html, body { width: 100%; height: 100%; overflow: hidden; background: #2a1608; font-family: "Trebuchet MS", Verdana, sans-serif; }
-#game { position: fixed; inset: 0; }
-#game canvas { display: block; width: 100%; height: 100%; }
-#minimap { position: fixed; left: 14px; bottom: 14px; width: 212px; height: 150px; border: 3px solid rgba(255,255,255,.85); border-radius: 10px; background: #5a3a22; box-shadow: 0 4px 18px rgba(0,0,0,.5); z-index: 5; }
-.hud { position: fixed; z-index: 6; color: #fff; text-shadow: 0 2px 4px rgba(0,0,0,.8); pointer-events: none; }
-#hudTopLeft { top: 12px; left: 14px; font-size: 20px; font-weight: 700; line-height: 1.35; }
-#hudTopLeft .cash { color: #7dff9a; font-size: 24px; }
-#healthBar { width: 190px; height: 12px; background: rgba(0,0,0,.55); border: 2px solid #fff; border-radius: 6px; margin-top: 4px; overflow: hidden; }
-#healthFill { height: 100%; width: 100%; background: linear-gradient(90deg, #37e05a, #a8ff6a); }
-#hudTopRight { top: 12px; right: 14px; text-align: right; font-size: 26px; letter-spacing: 3px; }
-#hudTopRight .clock { font-size: 18px; letter-spacing: 1px; }
-#hudObjective { left: 50%; transform: translateX(-50%); top: 12px; max-width: 560px; text-align: center; background: rgba(0,0,0,.55); border: 1px solid rgba(255,255,255,.35); border-radius: 10px; padding: 8px 16px; font-size: 16px; }
-#hudObjective b { color: #ffd166; }
-#hudSpeed { right: 16px; bottom: 16px; font-size: 30px; font-weight: 800; text-align: right; }
-#hudSpeed small { font-size: 14px; display: block; }
-#hudHint { left: 238px; bottom: 16px; font-size: 13px; opacity: .9; background: rgba(0,0,0,.45); padding: 6px 10px; border-radius: 8px; }
-#toast { left: 50%; transform: translateX(-50%); bottom: 110px; font-size: 22px; font-weight: 800; color: #ffd166; text-align: center; }
-#wasted { position: fixed; inset: 0; display: none; align-items: center; justify-content: center; flex-direction: column; background: rgba(20,0,0,.72); z-index: 20; color: #fff; }
-#wasted h1 { font-size: 64px; letter-spacing: 8px; color: #ff5252; }
-#wasted p { font-size: 20px; margin-top: 10px; }
-.overlay { position: fixed; inset: 0; z-index: 10; display: flex; align-items: center; justify-content: center; background: linear-gradient(160deg, rgba(181,80,42,.88), rgba(40,16,8,.92)), radial-gradient(circle at 50% 30%, #ff9d45 0, transparent 60%); }
-.overlay.hidden { display: none; }
-.panel { width: min(680px, 92vw); background: rgba(20,10,4,.92); border: 2px solid #ffb347; border-radius: 16px; padding: 28px 32px; color: #fff; box-shadow: 0 12px 40px rgba(0,0,0,.6); }
-.panel h1 { font-size: 54px; letter-spacing: 4px; color: #ffb347; text-align: center; }
-.panel h1 span { color: #ff5e62; }
-.panel h2 { font-size: 15px; letter-spacing: 5px; text-align: center; color: #9fd8ff; margin: 4px 0 14px; }
-.panel p { font-size: 15px; line-height: 1.55; color: #dfe8ff; }
-.panel .story { background: rgba(255,179,71,.12); border-left: 4px solid #ffb347; padding: 10px 12px; margin: 12px 0; }
-.controls { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 18px; font-size: 13px; margin: 12px 0; color: #cfe0ff; }
-.controls b { color: #ffd166; }
-.btnrow { display: flex; gap: 10px; justify-content: center; margin-top: 16px; flex-wrap: wrap; }
-button { pointer-events: auto; cursor: pointer; font: 700 17px "Trebuchet MS", sans-serif; color: #1a1200; background: linear-gradient(180deg, #ffd166, #ff9d45); border: none; border-radius: 10px; padding: 12px 22px; box-shadow: 0 4px 0 #b25e00; }
-button:active { transform: translateY(2px); box-shadow: 0 2px 0 #b25e00; }
-button.secondary { background: linear-gradient(180deg, #cfe0ff, #8fb8e8); box-shadow: 0 4px 0 #3a5a8a; }
-button.danger { background: linear-gradient(180deg, #ff8a80, #e53935); color: #fff; box-shadow: 0 4px 0 #7f0000; }
-.missions { font-size: 13px; line-height: 1.6; margin-top: 10px; color: #bfe3c0; }
-.missions b { color: #ffd166; }
-.small { font-size: 12px; opacity: .75; text-align: center; margin-top: 12px; }
+html, body { width: 100%; height: 100%; overflow: hidden; background: #2a1a2e;
+  font-family: "Trebuchet MS", Verdana, sans-serif; color: #fff3d6; }
+#app, #app canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+.hidden { display: none !important; }
+
+/* ---- HUD ---- */
+#hud { position: absolute; inset: 0; pointer-events: none; z-index: 5; }
+#cash { position: absolute; top: 16px; left: 18px; font-size: 30px; font-weight: bold;
+  color: #7dff8a; text-shadow: 2px 2px 0 rgba(0,0,0,0.7); letter-spacing: 1px; }
+#stars { position: absolute; top: 14px; right: 20px; font-size: 30px; letter-spacing: 4px;
+  color: #ffd23e; text-shadow: 2px 2px 0 rgba(0,0,0,0.7); min-height: 36px; }
+#speed { position: absolute; top: 58px; right: 20px; font-size: 18px; color: #ffe9a8;
+  text-shadow: 1px 1px 0 rgba(0,0,0,0.7); }
+#mission-box { position: absolute; top: 16px; left: 50%; transform: translateX(-50%);
+  max-width: 460px; text-align: center; background: rgba(42,26,46,0.72);
+  border: 1px solid #c96a3a; border-radius: 8px; padding: 8px 16px; }
+#mission-title { font-size: 15px; font-weight: bold; color: #ffb36b; letter-spacing: 2px; }
+#mission-text { font-size: 14px; color: #fff3d6; margin-top: 2px; }
+#health-wrap { position: absolute; left: 18px; bottom: 18px; width: 240px; }
+#health-label { font-size: 12px; letter-spacing: 3px; color: #ffb36b; margin-bottom: 4px;
+  text-shadow: 1px 1px 0 rgba(0,0,0,0.7); }
+#health-bar { height: 16px; background: rgba(0,0,0,0.6); border: 1px solid #fff3d6;
+  border-radius: 8px; overflow: hidden; }
+#health-fill { height: 100%; width: 100%; background: linear-gradient(90deg, #37d67a, #7dff8a);
+  transition: width 0.2s; }
+#health-text { font-size: 14px; margin-top: 3px; text-shadow: 1px 1px 0 rgba(0,0,0,0.7); }
+#message { position: absolute; left: 50%; bottom: 110px; transform: translateX(-50%);
+  font-size: 20px; font-weight: bold; color: #ffd23e; text-align: center;
+  text-shadow: 2px 2px 0 rgba(0,0,0,0.8); }
+#minimap { position: absolute; right: 16px; bottom: 16px; width: 220px; height: 220px;
+  border: 2px solid #c96a3a; border-radius: 10px; background: rgba(20,12,20,0.85); }
+
+/* ---- menus ---- */
+#menu, #pause-menu, #over-screen { position: absolute; inset: 0; z-index: 10;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  background: linear-gradient(180deg, rgba(42,26,46,0.88), rgba(122,46,29,0.82));
+  text-align: center; padding: 24px; }
+#menu-title { font-size: 64px; letter-spacing: 6px; color: #ff7a3c;
+  text-shadow: 4px 4px 0 #5e1d1d, 8px 8px 0 rgba(0,0,0,0.4); }
+#menu-desc { max-width: 620px; margin: 18px 0 24px; font-size: 17px; line-height: 1.55; }
+#menu-buttons, #pause-menu { display: flex; flex-direction: column; gap: 12px; }
+#menu-buttons { flex-direction: row; flex-wrap: wrap; justify-content: center; }
+button { pointer-events: auto; cursor: pointer; font-family: inherit; font-size: 17px;
+  font-weight: bold; letter-spacing: 2px; color: #fff3d6; background: #b5502e;
+  border: 2px solid #ffd23e; border-radius: 8px; padding: 12px 26px; }
+button:hover { background: #d96a3a; }
+#how-panel { max-width: 640px; margin-top: 22px; background: rgba(0,0,0,0.45);
+  border-radius: 8px; padding: 14px 20px; font-size: 15px; line-height: 1.7; text-align: left; }
+#how-panel b { color: #ffd23e; }
+#mission-list { color: #ffb36b; }
+#menu-foot { margin-top: 26px; font-size: 13px; color: #d8cdb4; }
+#pause-menu h2, #over-screen h2 { font-size: 44px; letter-spacing: 5px; color: #ff7a3c;
+  margin-bottom: 22px; text-shadow: 3px 3px 0 rgba(0,0,0,0.5); }
+#over-text { max-width: 520px; font-size: 17px; line-height: 1.6; margin-bottom: 24px; }
